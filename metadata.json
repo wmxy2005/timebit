@@ -1,0 +1,6 @@
+{
+  "name": "Timebit",
+  "description": "一款优雅、现代的个人时间记录与分析应用。支持分类计时、条目补录、精美的数据统计图表以及倒计时专注模式，助你建立起对时间流逝的精细化感知。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

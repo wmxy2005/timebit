@@ -1,0 +1,50 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Stopwatch Top Button Platform -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,20 h16 v4 h-16 z" />
+
+    <!-- Stopwatch Top Clicker -->
+    <path
+        android:fillColor="#8AB4F8"
+        android:pathData="M51,14 h6 v6 h-6 z" />
+
+    <!-- Stopwatch Outer Ring Body -->
+    <path
+        android:strokeWidth="4.5"
+        android:strokeColor="#FFFFFF"
+        android:fillColor="#00000000"
+        android:pathData="M54,54m-26,0a26,26 0,1 1,52 0a26,26 0,1 1,-52 0" />
+
+    <!-- Neon Colored Category Elapsed Segment -->
+    <path
+        android:strokeWidth="4"
+        android:strokeColor="#8B5CF6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M54,28 A26,26 0 0,1 80,54" />
+
+    <!-- Green Stopwatch Hand -->
+    <path
+        android:strokeWidth="3"
+        android:strokeColor="#10B981"
+        android:strokeLineCap="round"
+        android:pathData="M54,54 L54,34" />
+
+    <!-- Amber Stopwatch Hour Hand -->
+    <path
+        android:strokeWidth="3.5"
+        android:strokeColor="#F59E0B"
+        android:strokeLineCap="round"
+        android:pathData="M54,54 L66,54" />
+
+    <!-- Center Pivot Pin -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,54m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+</vector>
