@@ -75,11 +75,19 @@ fun getLocalizedCategoryName(categoryName: String): String {
 }
 
 @Composable
-fun getLocalizedDescription(description: String): String {
+fun getLocalizedDescription(description: String, timerType: Int = 0): String {
+    if (description.isEmpty()) {
+        return when (timerType) {
+            1 -> stringResource(R.string.desc_auto_timer_start)
+            2 -> stringResource(R.string.desc_manual_record)
+            else -> stringResource(R.string.desc_quick_timer)
+        }
+    }
     return when (description) {
         "自动计时" -> stringResource(R.string.desc_auto_timer)
         "自动开始计时" -> stringResource(R.string.desc_auto_timer_start)
         "手动记录" -> stringResource(R.string.desc_manual_record)
+        "快捷计时", "Quick Timer" -> stringResource(R.string.desc_quick_timer)
         else -> description
     }
 }
@@ -93,6 +101,8 @@ fun TimeTrackApp(viewModel: TimeTrackViewModel) {
     var showTargetDialog by remember { mutableStateOf(false) }
     var showMonthTargetDialog by remember { mutableStateOf(false) }
     val currentStatsMonth by viewModel.currentStatsMonth.collectAsStateWithLifecycle()
+    val statsPeriod by viewModel.statsPeriod.collectAsStateWithLifecycle()
+    val currentStatsDay by viewModel.currentStatsDay.collectAsStateWithLifecycle()
     var isHistoryEditMode by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -141,6 +151,9 @@ fun TimeTrackApp(viewModel: TimeTrackViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.refreshCurrentDate()
+                if (viewModel.selectedTab.value == 0) {
+                    viewModel.checkAndTriggerAutoTimerOnSwitch()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -226,7 +239,7 @@ fun TimeTrackApp(viewModel: TimeTrackViewModel) {
                             ) {
                                 Icon(
                                     imageVector = if (isHistoryEditMode) Icons.Default.Check else Icons.Default.Edit,
-                                    contentDescription = if (isHistoryEditMode) "保存" else "切换编辑",
+                                    contentDescription = if (isHistoryEditMode) stringResource(R.string.content_save) else stringResource(R.string.content_edit_toggle),
                                     tint = MaterialTheme.colorScheme.onPrimaryContainer,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -256,10 +269,11 @@ fun TimeTrackApp(viewModel: TimeTrackViewModel) {
                         }
                     } else if (selectedTab == 2) {
                         // Month-specific target settings button (left of default target settings icon)
-                        val currentMonthLabel = remember(currentStatsMonth) {
+                        val currentMonthLabel = remember(statsPeriod, currentStatsMonth, currentStatsDay) {
+                            val calendar = if (statsPeriod == "今天") currentStatsDay else currentStatsMonth
                             val locale = Locale.getDefault()
                             val pattern = if (locale.language == "zh") "yyyy年M月" else "MMM yyyy"
-                            SimpleDateFormat(pattern, locale).format(currentStatsMonth.time)
+                            SimpleDateFormat(pattern, locale).format(calendar.time)
                         }
 
                         FilledTonalButton(
@@ -442,8 +456,8 @@ fun TimeTrackApp(viewModel: TimeTrackViewModel) {
     if (showManualDialog) {
         ManualRecordDialog(
             onDismiss = { showManualDialog = false },
-            onSave = { category, desc, mins, offset ->
-                viewModel.addManualLog(category, desc, mins, offset)
+            onSave = { category, desc, mins, startTimeMillis ->
+                viewModel.addManualLog(category, desc, mins, startTimeMillis)
                 showManualDialog = false
             }
         )
@@ -458,8 +472,9 @@ fun TimeTrackApp(viewModel: TimeTrackViewModel) {
     }
 
     if (showMonthTargetDialog) {
-        val statsMonthKey = remember(currentStatsMonth) {
-            java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.US).format(currentStatsMonth.time)
+        val statsMonthKey = remember(statsPeriod, currentStatsMonth, currentStatsDay) {
+            val calendar = if (statsPeriod == "今天") currentStatsDay else currentStatsMonth
+            java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.US).format(calendar.time)
         }
         MonthlyTargetSettingsDialog(
             viewModel = viewModel,
@@ -534,6 +549,7 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
     val defaultCategory by viewModel.defaultCategory.collectAsStateWithLifecycle()
     val selectedCategoryFromVm by viewModel.selectedTrackerCategory.collectAsStateWithLifecycle()
 
+    val timerType by viewModel.timerType.collectAsStateWithLifecycle()
     val currentDateTrigger by viewModel.currentDateTrigger.collectAsStateWithLifecycle()
 
     var descField by remember { mutableStateOf("") }
@@ -543,6 +559,14 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
         if (isRunning) {
             descField = activeDesc
         }
+    }
+
+    var wasRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(isRunning) {
+        if (wasRunning && !isRunning) {
+            descField = ""
+        }
+        wasRunning = isRunning
     }
 
     val currentMonthSelectedCatMins = remember(allLogs, selectedCat, currentDateTrigger) {
@@ -573,9 +597,8 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
     val latestLogTimeString = remember(latestLog, noRecordsPlaceholder) {
         if (latestLog != null) {
             val locale = Locale.getDefault()
-            val pattern = if (locale.language == "zh") "MM月dd日 HH:mm" else "MMM d, HH:mm"
-            val format = SimpleDateFormat(pattern, locale)
-            format.format(Date(latestLog.startTime))
+            val format = SimpleDateFormat("HH:mm:ss", locale)
+            format.format(Date(latestLog.updatedTime))
         } else {
             noRecordsPlaceholder
         }
@@ -721,7 +744,8 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                                 latestLog.category,
                                 latestLog.description,
                                 latestLog.startTime,
-                                latestLog.id
+                                latestLog.id,
+                                latestLog.timerType
                             )
                         },
                         colors = ButtonDefaults.buttonColors(
@@ -740,7 +764,7 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "${stringResource(R.string.continue_btn)}: [${getLocalizedCategoryName(latestLog.category)}] ${getLocalizedDescription(latestLog.description)}",
+                            text = "${stringResource(R.string.continue_btn)}: [${getLocalizedCategoryName(latestLog.category)}] ${getLocalizedDescription(latestLog.description, latestLog.timerType)}",
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -820,7 +844,7 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = activeCategory,
+                        text = getLocalizedCategoryName(activeCategory),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold,
                         color = activeColor
@@ -838,7 +862,14 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                     viewModel.updateTimerDescription(it)
                 }
             },
-            placeholder = { Text(stringResource(R.string.hint_desc)) },
+            placeholder = {
+                val placeholderRes = if (isRunning) {
+                    if (timerType == 1) R.string.desc_auto_timer_start else R.string.desc_quick_timer
+                } else {
+                    R.string.hint_desc
+                }
+                Text(stringResource(placeholderRes))
+            },
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
@@ -988,9 +1019,22 @@ fun HistoryScreen(viewModel: TimeTrackViewModel, isEditMode: Boolean) {
 
     var editingLog by remember { mutableStateOf<TimeLog?>(null) }
     var deletingLogId by remember { mutableStateOf<Int?>(null) }
+    var showMonthPicker by remember { mutableStateOf(false) }
 
     val groupedLogs = remember(logs) {
         logs.groupBy { it.belongDate }
+    }
+
+    if (showMonthPicker) {
+        MonthPickerDialog(
+            initialYear = currentHistoryMonth.get(Calendar.YEAR),
+            initialMonth = currentHistoryMonth.get(Calendar.MONTH),
+            onDismiss = { showMonthPicker = false },
+            onConfirm = { year, month ->
+                viewModel.setHistoryMonth(year, month)
+                showMonthPicker = false
+            }
+        )
     }
 
     Column(
@@ -1031,22 +1075,52 @@ fun HistoryScreen(viewModel: TimeTrackViewModel, isEditMode: Boolean) {
 
                 val historyMonthText = remember(currentHistoryMonth) {
                     val locale = Locale.getDefault()
-                    val pattern = if (locale.language == "zh") "yyyy年 M月" else "MMMM yyyy"
+                    val pattern = if (locale.language == "zh") "yyyy年M月" else "MMMM yyyy"
                     SimpleDateFormat(pattern, locale).format(currentHistoryMonth.time)
                 }
 
-                Text(
-                    text = historyMonthText,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isCurrentHistoryMonth) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(enabled = !isCurrentHistoryMonth) {
-                            viewModel.resetHistoryMonthToCurrent()
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    if (!isCurrentHistoryMonth) {
+                        IconButton(
+                            onClick = { viewModel.resetHistoryMonthToCurrent() },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Home,
+                                contentDescription = stringResource(R.string.content_reset_to_current_month),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                showMonthPicker = true
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = historyMonthText,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isCurrentHistoryMonth) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = stringResource(R.string.content_select_month),
+                            tint = if (isCurrentHistoryMonth) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
 
                 IconButton(
                     onClick = { viewModel.changeHistoryMonth(1) },
@@ -1174,9 +1248,9 @@ fun HistoryScreen(viewModel: TimeTrackViewModel, isEditMode: Boolean) {
         }
     }
 
-    if (editingLog != null) {
+    editingLog?.let { logToEdit ->
         EditTimeLogDialog(
-            log = editingLog!!,
+            log = logToEdit,
             onDismiss = { editingLog = null },
             onSave = { updated ->
                 viewModel.updateLog(updated)
@@ -1185,11 +1259,11 @@ fun HistoryScreen(viewModel: TimeTrackViewModel, isEditMode: Boolean) {
         )
     }
 
-    if (deletingLogId != null) {
+    deletingLogId?.let { logIdToDelete ->
         DeleteConfirmationDialog(
             onDismiss = { deletingLogId = null },
             onConfirm = {
-                viewModel.deleteLog(deletingLogId!!)
+                viewModel.deleteLog(logIdToDelete)
                 deletingLogId = null
             }
         )
@@ -1257,7 +1331,7 @@ fun HistoryListItem(log: TimeLog, isEditMode: Boolean, onEdit: () -> Unit, onDel
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                         )
                         Text(
-                            text = getLocalizedDescription(log.description),
+                            text = getLocalizedDescription(log.description, log.timerType),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -1322,37 +1396,59 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
     val allLogs by viewModel.allLogs.collectAsStateWithLifecycle()
 
     var selectedDayForDetail by remember { mutableStateOf<Int?>(null) }
+    var showMonthPicker by remember { mutableStateOf(false) }
+
+    if (showMonthPicker) {
+        MonthPickerDialog(
+            initialYear = currentStatsMonth.get(Calendar.YEAR),
+            initialMonth = currentStatsMonth.get(Calendar.MONTH),
+            onDismiss = { showMonthPicker = false },
+            onConfirm = { year, month ->
+                viewModel.setStatsMonth(year, month)
+                showMonthPicker = false
+            }
+        )
+    }
 
     val currentYear = currentStatsMonth.get(Calendar.YEAR)
     val currentMonthIdx = currentStatsMonth.get(Calendar.MONTH) // 0-based
     val currentMonthName = remember(currentStatsMonth) {
         val locale = Locale.getDefault()
-        val pattern = if (locale.language == "zh") "yyyy年 M月" else "MMMM yyyy"
+        val pattern = if (locale.language == "zh") "yyyy年M月" else "MMMM yyyy"
         SimpleDateFormat(pattern, locale).format(currentStatsMonth.time)
     }
 
-    val todayCategoryTotals = remember(allLogs) {
+    val currentStatsDay by viewModel.currentStatsDay.collectAsStateWithLifecycle()
+
+    val todayCategoryTotals = remember(allLogs, currentStatsDay) {
         val totals = mutableMapOf<String, Float>()
         Categories.forEach { cat -> totals[cat.name] = 0f }
+        val targetYear = currentStatsDay.get(Calendar.YEAR)
+        val targetDayOfYear = currentStatsDay.get(Calendar.DAY_OF_YEAR)
         val c = Calendar.getInstance()
-        val todayYear = c.get(Calendar.YEAR)
-        val todayDayOfYear = c.get(Calendar.DAY_OF_YEAR)
         allLogs.forEach { log ->
             c.timeInMillis = log.startTime
-            if (c.get(Calendar.YEAR) == todayYear && c.get(Calendar.DAY_OF_YEAR) == todayDayOfYear) {
+            if (c.get(Calendar.YEAR) == targetYear && c.get(Calendar.DAY_OF_YEAR) == targetDayOfYear) {
                 totals[log.category] = (totals[log.category] ?: 0f) + log.durationMinutes
             }
         }
         totals
     }
 
-    val monthlyCategoryTotalsFromAllLogs = remember(allLogs, currentYear, currentMonthIdx) {
+    val activeYear = remember(statsPeriod, currentStatsMonth, currentStatsDay) {
+        if (statsPeriod == "今天") currentStatsDay.get(Calendar.YEAR) else currentStatsMonth.get(Calendar.YEAR)
+    }
+    val activeMonthIdx = remember(statsPeriod, currentStatsMonth, currentStatsDay) {
+        if (statsPeriod == "今天") currentStatsDay.get(Calendar.MONTH) else currentStatsMonth.get(Calendar.MONTH)
+    }
+
+    val monthlyCategoryTotalsFromAllLogs = remember(allLogs, activeYear, activeMonthIdx) {
         val totals = mutableMapOf<String, Float>()
         Categories.forEach { cat -> totals[cat.name] = 0f }
         val c = Calendar.getInstance()
         allLogs.forEach { log ->
             c.timeInMillis = log.startTime
-            if (c.get(Calendar.YEAR) == currentYear && c.get(Calendar.MONTH) == currentMonthIdx) {
+            if (c.get(Calendar.YEAR) == activeYear && c.get(Calendar.MONTH) == activeMonthIdx) {
                 totals[log.category] = (totals[log.category] ?: 0f) + log.durationMinutes
             }
         }
@@ -1404,7 +1500,81 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
         }
 
         if (statsPeriod == "今天") {
-            // (本日目标 under "今天" has been removed as per requested to not display)
+            val context = LocalContext.current
+            val statsDayFormatted = remember(currentStatsDay) {
+                val locale = Locale.getDefault()
+                val pattern = if (locale.language == "zh") "yyyy年M月d日" else "EEEE, MMMM d, yyyy"
+                SimpleDateFormat(pattern, locale).format(currentStatsDay.time)
+            }
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    val todayCal = Calendar.getInstance()
+                    val isToday = todayCal.get(Calendar.YEAR) == currentStatsDay.get(Calendar.YEAR) &&
+                            todayCal.get(Calendar.DAY_OF_YEAR) == currentStatsDay.get(Calendar.DAY_OF_YEAR)
+
+                    if (!isToday) {
+                        IconButton(
+                            onClick = { viewModel.resetStatsDayToCurrent() },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Home,
+                                contentDescription = stringResource(R.string.content_reset_to_current_month),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                val currentY = currentStatsDay.get(Calendar.YEAR)
+                                val currentM = currentStatsDay.get(Calendar.MONTH)
+                                val currentD = currentStatsDay.get(Calendar.DAY_OF_MONTH)
+                                
+                                android.app.DatePickerDialog(
+                                    context,
+                                    { _, year, month, dayOfMonth ->
+                                        viewModel.setStatsDay(year, month, dayOfMonth)
+                                    },
+                                    currentY,
+                                    currentM,
+                                    currentD
+                                ).show()
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = statsDayFormatted,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (isToday) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ArrowDropDown,
+                            contentDescription = stringResource(R.string.content_select_date),
+                            tint = if (isToday) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
         } else {
             // MONTHLY CALENDAR GRID
             Card(
@@ -1438,18 +1608,48 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
                         val isCurrentStatsMonth = today.get(Calendar.YEAR) == currentStatsMonth.get(Calendar.YEAR) &&
                                 today.get(Calendar.MONTH) == currentStatsMonth.get(Calendar.MONTH)
 
-                        Text(
-                            text = currentMonthName,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isCurrentStatsMonth) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = !isCurrentStatsMonth) {
-                                    viewModel.resetStatsMonthToCurrent()
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            if (!isCurrentStatsMonth) {
+                                IconButton(
+                                    onClick = { viewModel.resetStatsMonthToCurrent() },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Home,
+                                        contentDescription = stringResource(R.string.content_reset_to_current_month),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
                                 }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        showMonthPicker = true
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = currentMonthName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isCurrentStatsMonth) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = Icons.Default.ArrowDropDown,
+                                    contentDescription = stringResource(R.string.content_select_month),
+                                    tint = if (isCurrentStatsMonth) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
 
                         IconButton(
                             onClick = { viewModel.changeStatsMonth(1) },
@@ -1846,8 +2046,7 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
         }
     }
 
-    if (selectedDayForDetail != null) {
-        val dayNum = selectedDayForDetail!!
+    selectedDayForDetail?.let { dayNum ->
         DayDetailDialog(
             dayNum = dayNum,
             year = currentYear,
@@ -1926,13 +2125,13 @@ fun DayDetailDialog(
                         IconButton(onClick = { isEditMode = !isEditMode }, modifier = Modifier.size(32.dp)) {
                             Icon(
                                 imageVector = if (isEditMode) Icons.Default.Check else Icons.Default.Edit,
-                                contentDescription = if (isEditMode) "保存" else "切换编辑",
+                                contentDescription = if (isEditMode) stringResource(R.string.content_save) else stringResource(R.string.content_edit_toggle),
                                 tint = if (isEditMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                         IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                            Icon(Icons.Default.Close, contentDescription = "关闭")
+                            Icon(Icons.Default.Close, contentDescription = stringResource(R.string.content_close))
                         }
                     }
                 }
@@ -1947,7 +2146,7 @@ fun DayDetailDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "该天暂无专注记录",
+                            text = stringResource(R.string.history_empty_day),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1962,7 +2161,7 @@ fun DayDetailDialog(
                         items(dayLogs, key = { it.id }) { log ->
                             val catColor = getCategoryColor(log.category)
                             val catIcon = getCategoryIcon(log.category)
-                            val durationText = "${log.durationMinutes}分钟"
+                            val durationText = "${log.durationMinutes}${stringResource(R.string.mins_suffix)}"
                             val logStartTimeStr = remember(log.startTime) {
                                 SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(log.startTime))
                             }
@@ -2001,7 +2200,7 @@ fun DayDetailDialog(
 
                                         Column {
                                             Text(
-                                                text = getLocalizedDescription(log.description),
+                                                text = getLocalizedDescription(log.description, log.timerType),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.onSurface,
@@ -2058,15 +2257,15 @@ fun DayDetailDialog(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("返回")
+                    Text(stringResource(R.string.btn_back))
                 }
             }
         }
     }
 
-    if (editingLog != null) {
+    editingLog?.let { logToEdit ->
         EditTimeLogDialog(
-            log = editingLog!!,
+            log = logToEdit,
             onDismiss = { editingLog = null },
             onSave = { updated ->
                 onUpdate(updated)
@@ -2075,11 +2274,11 @@ fun DayDetailDialog(
         )
     }
 
-    if (deletingLogId != null) {
+    deletingLogId?.let { logIdToDelete ->
         DeleteConfirmationDialog(
             onDismiss = { deletingLogId = null },
             onConfirm = {
-                onDelete(deletingLogId!!)
+                onDelete(logIdToDelete)
                 deletingLogId = null
             }
         )
@@ -2095,14 +2294,14 @@ fun DeleteConfirmationDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "确认删除",
+                text = stringResource(R.string.dialog_delete_title),
                 fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.titleLarge
             )
         },
         text = {
             Text(
-                text = "确定要删除这条专注记录吗？此操作无法撤销。",
+                text = stringResource(R.string.dialog_delete_message),
                 style = MaterialTheme.typography.bodyMedium
             )
         },
@@ -2115,12 +2314,12 @@ fun DeleteConfirmationDialog(
                 ),
                 shape = RoundedCornerShape(12.dp)
             ) {
-                Text("删除")
+                Text(stringResource(R.string.dialog_delete_confirm))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("取消")
+                Text(stringResource(R.string.btn_cancel))
             }
         },
         shape = RoundedCornerShape(24.dp)
@@ -2167,8 +2366,25 @@ fun EditTimeLogDialog(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
                 horizontalAlignment = Alignment.Start
             ) {
+                val dateFormat = remember { java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG, Locale.getDefault()) }
+                val timeFormat = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
+                val dateStr = remember(log.startTime) { dateFormat.format(Date(log.startTime)) }
+                val startTimeStr = remember(log.startTime) { timeFormat.format(Date(log.startTime)) }
+                val endTimeStr = remember(log.startTime, log.durationMinutes) {
+                    val targetEnd = if (log.endTime > 0) log.endTime else (log.startTime + log.durationMinutes * 60 * 1000)
+                    timeFormat.format(Date(targetEnd))
+                }
+
+                val titleText = remember(dateStr) {
+                    if (Locale.getDefault().language == "zh") {
+                        "编辑 $dateStr"
+                    } else {
+                        "Edit $dateStr"
+                    }
+                }
+
                 Text(
-                    text = "编辑专注记录",
+                    text = titleText,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -2179,13 +2395,55 @@ fun EditTimeLogDialog(
                 OutlinedTextField(
                     value = desc,
                     onValueChange = { desc = it },
-                    label = { Text("记录内容/说明") },
+                    label = { Text(stringResource(R.string.edit_log_desc_label)) },
+                    placeholder = {
+                        val placeholderRes = when (log.timerType) {
+                            1 -> R.string.desc_auto_timer_start
+                            2 -> R.string.desc_manual_record
+                            else -> R.string.desc_quick_timer
+                        }
+                        Text(stringResource(placeholderRes))
+                    },
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.edit_log_start_time_label),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = startTimeStr,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.edit_log_end_time_label),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = endTimeStr,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
                 Text(
-                    text = "更改分类",
+                    text = stringResource(R.string.edit_log_change_category),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2223,7 +2481,7 @@ fun EditTimeLogDialog(
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Text(
-                                            text = category.name,
+                                            text = getLocalizedCategoryName(category.name),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2239,7 +2497,7 @@ fun EditTimeLogDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = "持续时间 (分钟)",
+                    text = stringResource(R.string.edit_log_duration_label),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2277,7 +2535,7 @@ fun EditTimeLogDialog(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("取消")
+                        Text(stringResource(R.string.btn_cancel))
                     }
 
                     Button(
@@ -2303,7 +2561,7 @@ fun EditTimeLogDialog(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier.weight(1.5f)
                     ) {
-                        Text("保存")
+                        Text(stringResource(R.string.content_save))
                     }
                 }
             }
@@ -2828,51 +3086,37 @@ fun SettingsScreen(viewModel: TimeTrackViewModel) {
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
-                                    .weight(1f)
+                                    .width(180.dp)
                                     .testTag("auto_timer_time_input")
                             )
 
-                            // Quick preset presets
+                            // Quick preset presets (单行显示并且水平滚动)
                             val presets = listOf("08:00", "09:00", "18:00", "19:00")
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier.wrapContentWidth()
+                                modifier = Modifier.weight(1f)
                             ) {
                                 Text(
                                     text = stringResource(R.string.settings_preset_label),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    presets.take(2).forEach { time ->
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    presets.forEach { time ->
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(6.dp))
                                                 .background(MaterialTheme.colorScheme.primaryContainer)
                                                 .clickable { viewModel.updateAutoTimerTime(time) }
-                                                .padding(horizontal = 6.dp, vertical = 4.dp)
+                                                .padding(horizontal = 8.dp, vertical = 6.dp)
                                         ) {
                                             Text(
                                                 text = time,
-                                                fontSize = 10.sp,
-                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    presets.drop(2).forEach { time ->
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(MaterialTheme.colorScheme.primaryContainer)
-                                                .clickable { viewModel.updateAutoTimerTime(time) }
-                                                .padding(horizontal = 6.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = time,
-                                                fontSize = 10.sp,
+                                                fontSize = 11.sp,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                                 fontWeight = FontWeight.Bold
                                             )
@@ -2957,9 +3201,10 @@ fun CustomRingPieChart(
 @Composable
 fun ManualRecordDialog(
     onDismiss: () -> Unit,
-    onSave: (category: String, description: String, durationMinutes: Long, dateOffset: Int) -> Unit
+    onSave: (category: String, description: String, durationMinutes: Long, startTimeMillis: Long) -> Unit
 ) {
     val localFocusManager = LocalFocusManager.current
+    val context = LocalContext.current
     var desc by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("工作") }
     var durationMinutesTextState by remember {
@@ -2970,7 +3215,7 @@ fun ManualRecordDialog(
             )
         )
     }
-    var dateOffset by remember { mutableStateOf(0) } // 0: today, 1: yesterday, 2: two days ago
+    var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -3008,7 +3253,7 @@ fun ManualRecordDialog(
                     value = desc,
                     onValueChange = { desc = it },
                     label = { Text(stringResource(R.string.manual_label_desc)) },
-                    placeholder = { Text("例如：看书、跑步、写文档") },
+                    placeholder = { Text(stringResource(R.string.desc_manual_record)) },
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3057,7 +3302,7 @@ fun ManualRecordDialog(
                                             modifier = Modifier.size(14.dp)
                                         )
                                         Text(
-                                            text = category.name,
+                                            text = getLocalizedCategoryName(category.name),
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
                                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3072,23 +3317,61 @@ fun ManualRecordDialog(
 
                 // Date Select Badge
                 Text(
-                    text = "补录日期",
+                    text = stringResource(R.string.manual_label_date),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                SingleChoiceSegmentedButtonRow(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    val options = listOf("今天", "昨天", "更早")
-                    options.forEachIndexed { index, opt ->
-                        SegmentedButton(
-                            selected = dateOffset == index,
-                            onClick = { dateOffset = index },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size)
-                        ) {
-                            Text(opt, fontSize = 11.sp)
+                
+                val manualDateFormat = remember { java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG, Locale.getDefault()) }
+                val selectedDateText = remember(selectedDateMillis) { manualDateFormat.format(Date(selectedDateMillis)) }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(
+                            width = 1.dp,
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
+                        .clickable {
+                            val currentCal = Calendar.getInstance().apply { timeInMillis = selectedDateMillis }
+                            android.app.DatePickerDialog(
+                                context,
+                                { _, year, month, dayOfMonth ->
+                                    val newCal = Calendar.getInstance().apply {
+                                        timeInMillis = selectedDateMillis
+                                        set(Calendar.YEAR, year)
+                                        set(Calendar.MONTH, month)
+                                        set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                                    }
+                                    selectedDateMillis = newCal.timeInMillis
+                                },
+                                currentCal.get(Calendar.YEAR),
+                                currentCal.get(Calendar.MONTH),
+                                currentCal.get(Calendar.DAY_OF_MONTH)
+                            ).show()
                         }
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Today,
+                            contentDescription = stringResource(R.string.content_select_month),
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            text = selectedDateText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
 
@@ -3179,7 +3462,7 @@ fun ManualRecordDialog(
                     Button(
                         onClick = {
                             val durationVal = durationMinutesTextState.text.toLongOrNull() ?: 30L
-                            onSave(selectedCategory, desc, durationVal, dateOffset)
+                            onSave(selectedCategory, desc, durationVal, selectedDateMillis)
                         },
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
@@ -3193,3 +3476,119 @@ fun ManualRecordDialog(
         }
     }
 }
+
+@Composable
+fun MonthPickerDialog(
+    initialYear: Int,
+    initialMonth: Int, // 0-based
+    onDismiss: () -> Unit,
+    onConfirm: (year: Int, month: Int) -> Unit
+) {
+    var selectedYear by remember { mutableStateOf(initialYear) }
+    var selectedMonth by remember { mutableStateOf(initialMonth) }
+    
+    val years = remember {
+        val currentY = Calendar.getInstance().get(Calendar.YEAR)
+        ((currentY - 10)..(currentY + 5)).toList()
+    }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.month_picker_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Year list (scrollable Column)
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(years) { y ->
+                        val isSelected = y == selectedYear
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                                .clickable { selectedYear = y }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (Locale.getDefault().language == "zh") "${y}年" else "$y",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+                
+                // Month list
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier
+                        .weight(1.2f)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    items(12) { m ->
+                        val isSelected = m == selectedMonth
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent)
+                                .clickable { selectedMonth = m }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val mText = if (Locale.getDefault().language == "zh") {
+                                "${m + 1}月"
+                            } else {
+                                val dfs = java.text.DateFormatSymbols(Locale.getDefault())
+                                dfs.months[m]
+                            }
+                            Text(
+                                text = mText,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(selectedYear, selectedMonth) }
+            ) {
+                Text(stringResource(R.string.month_picker_confirm), fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.month_picker_cancel))
+            }
+        }
+    )
+}
+

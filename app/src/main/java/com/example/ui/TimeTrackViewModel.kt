@@ -31,6 +31,9 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     private val _currentStatsMonth = MutableStateFlow<Calendar>(Calendar.getInstance())
     val currentStatsMonth: StateFlow<Calendar> = _currentStatsMonth
 
+    private val _currentStatsDay = MutableStateFlow<Calendar>(Calendar.getInstance())
+    val currentStatsDay: StateFlow<Calendar> = _currentStatsDay
+
     private val _currentDateTrigger = MutableStateFlow(System.currentTimeMillis())
     val currentDateTrigger: StateFlow<Long> = _currentDateTrigger
 
@@ -71,6 +74,37 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         _currentStatsMonth.value = Calendar.getInstance()
     }
 
+    fun setHistoryMonth(year: Int, month: Int) {
+        val current = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+        _currentHistoryMonth.value = current
+    }
+
+    fun setStatsMonth(year: Int, month: Int) {
+        val current = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, 1)
+        }
+        _currentStatsMonth.value = current
+    }
+
+    fun setStatsDay(year: Int, month: Int, day: Int) {
+        val current = Calendar.getInstance().apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, day)
+        }
+        _currentStatsDay.value = current
+    }
+
+    fun resetStatsDayToCurrent() {
+        _currentStatsDay.value = Calendar.getInstance()
+    }
+
     private val _resumingLogId = MutableStateFlow<Int?>(null)
     val resumingLogId: StateFlow<Int?> = _resumingLogId
     
@@ -93,6 +127,9 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _timerElapsedSeconds = MutableStateFlow(0L)
     val timerElapsedSeconds: StateFlow<Long> = _timerElapsedSeconds
+
+    private val _timerType = MutableStateFlow(0)
+    val timerType: StateFlow<Int> = _timerType
 
     // Statistics Filter: "今天" (Today), "按月" (Monthly)
     private val _statsPeriod = MutableStateFlow("今天")
@@ -147,8 +184,9 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         initialValue = loadMonthlyTargets()
     )
 
-    val statsMonthTargets: StateFlow<Map<String, Float>> = combine(_currentStatsMonth, targetUpdatedTrigger) { statsMonthCal, _ ->
-        val monthKey = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.US).format(statsMonthCal.time)
+    val statsMonthTargets: StateFlow<Map<String, Float>> = combine(_currentStatsMonth, _currentStatsDay, _statsPeriod, targetUpdatedTrigger) { statsMonthCal, statsDayCal, period, _ ->
+        val activeCal = if (period == "今天") statsDayCal else statsMonthCal
+        val monthKey = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.US).format(activeCal.time)
         getMonthlyTargetsForMonth(monthKey)
     }.stateIn(
         scope = viewModelScope,
@@ -183,6 +221,11 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 _timerStartMillis.value = savedStartMillis
                 val savedResId = prefs.getInt("timer_resuming_id", -1)
                 _resumingLogId.value = if (savedResId != -1) savedResId else null
+                _timerType.value = if (prefs.contains("timer_type")) {
+                    prefs.getInt("timer_type", 0)
+                } else {
+                    if (prefs.getBoolean("timer_is_auto", false)) 1 else 0
+                }
                 _isTimerRunning.value = true
                 _timerElapsedSeconds.value = (System.currentTimeMillis() - savedStartMillis) / 1000
                 startTimerCounting(savedStartMillis)
@@ -229,10 +272,10 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
                     
                     if (System.currentTimeMillis() >= targetCal.timeInMillis) {
                         val autoRecordExists = allLogs.value.any { log ->
-                            isToday(log.startTime) && (log.description == "自动开始计时" || log.description == "自动计时")
+                            isToday(log.startTime) && log.timerType == 1
                         }
                         if (!autoRecordExists && !_isTimerRunning.value) {
-                            startTimerFromPast(_defaultCategory.value, "自动计时", targetCal.timeInMillis, -1)
+                            startTimerFromPast(_defaultCategory.value, "", targetCal.timeInMillis, -1, timerType = 1)
                         }
                     }
                 }
@@ -367,6 +410,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
             .putString("timer_category", _timerCategory.value)
             .putString("timer_description", _timerDescription.value)
             .putInt("timer_resuming_id", _resumingLogId.value ?: -1)
+            .putInt("timer_type", _timerType.value)
             .apply()
     }
 
@@ -377,6 +421,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
             .putString("timer_category", "")
             .putString("timer_description", "")
             .putInt("timer_resuming_id", -1)
+            .putInt("timer_type", 0)
             .apply()
     }
 
@@ -386,6 +431,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         _timerCategory.value = category
         _timerDescription.value = description
         _timerStartMillis.value = System.currentTimeMillis()
+        _timerType.value = 0
         _isTimerRunning.value = true
         _timerElapsedSeconds.value = 0L
         _resumingLogId.value = null
@@ -395,11 +441,12 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     // Start timer using a specified starting time from the past
-    fun startTimerFromPast(category: String, description: String, startMillis: Long, id: Int) {
+    fun startTimerFromPast(category: String, description: String, startMillis: Long, id: Int, timerType: Int = 0) {
         _timerCategory.value = category
         _timerDescription.value = description
         _timerStartMillis.value = startMillis
         _resumingLogId.value = id
+        _timerType.value = timerType
         _isTimerRunning.value = true
         _timerElapsedSeconds.value = (System.currentTimeMillis() - startMillis) / 1000
 
@@ -423,6 +470,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         _timerElapsedSeconds.value = 0L
         _timerDescription.value = ""
         _resumingLogId.value = null
+        _timerType.value = 0
 
         val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
         prefs.edit().putString("last_abandoned_date", todayStr).apply()
@@ -431,26 +479,31 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saveActiveTimer() {
         val durationSecs = _timerElapsedSeconds.value
-        val durationMins = (durationSecs + 59) / 60 // round up to minutes
+        val durationMins = durationSecs / 60 // 向下取整计算分钟数
         if (durationMins > 0) {
             val resId = _resumingLogId.value
+            val nowEndTime = _timerStartMillis.value + durationSecs * 1000
             if (resId != null && resId != -1) {
                 // Update/overwrite existing log
                 val log = TimeLog(
                     id = resId,
                     category = _timerCategory.value,
-                    description = _timerDescription.value.ifEmpty { "快捷计时" },
+                    description = _timerDescription.value,
                     startTime = _timerStartMillis.value,
-                    durationMinutes = durationMins
+                    durationMinutes = durationMins,
+                    timerType = _timerType.value,
+                    endTime = nowEndTime
                 )
                 updateLog(log)
             } else {
                 // Insert new log
                 val log = TimeLog(
                     category = _timerCategory.value,
-                    description = _timerDescription.value.ifEmpty { "快捷计时" },
+                    description = _timerDescription.value,
                     startTime = _timerStartMillis.value,
-                    durationMinutes = durationMins
+                    durationMinutes = durationMins,
+                    timerType = _timerType.value,
+                    endTime = nowEndTime
                 )
                 addLog(log)
             }
@@ -471,15 +524,14 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun addManualLog(category: String, description: String, durationMins: Long, dateOffsetDays: Int) {
+    fun addManualLog(category: String, description: String, durationMins: Long, startTimeMillis: Long) {
         viewModelScope.launch {
-            val calendar = Calendar.getInstance()
-            calendar.add(Calendar.DAY_OF_YEAR, -dateOffsetDays)
             val log = TimeLog(
                 category = category,
-                description = description.ifEmpty { "手动记录" },
-                startTime = calendar.timeInMillis,
-                durationMinutes = durationMins
+                description = description,
+                startTime = startTimeMillis,
+                durationMinutes = durationMins,
+                timerType = 2
             )
             repository.insertLog(log)
         }
@@ -492,10 +544,10 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     // Filtered logs for simple stats or daily stats
-    val filteredLogsForStats: StateFlow<List<TimeLog>> = combine(allLogs, _statsPeriod, _currentStatsMonth, _currentDateTrigger) { logs, period, viewMonthCal, triggerTime ->
+    val filteredLogsForStats: StateFlow<List<TimeLog>> = combine(allLogs, _statsPeriod, _currentStatsMonth, _currentStatsDay, _currentDateTrigger) { logs, period, viewMonthCal, viewDayCal, triggerTime ->
         when (period) {
             "今天" -> {
-                val todayRange = getDayBounds(0, triggerTime)
+                val todayRange = getDayBoundsForCal(viewDayCal)
                 logs.filter { it.startTime >= todayRange.first && it.startTime <= todayRange.second }
             }
             "按月" -> {
@@ -513,6 +565,22 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    private fun getDayBoundsForCal(calendar: Calendar): Pair<Long, Long> {
+        val cal = calendar.clone() as Calendar
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val start = cal.timeInMillis
+
+        cal.set(Calendar.HOUR_OF_DAY, 23)
+        cal.set(Calendar.MINUTE, 59)
+        cal.set(Calendar.SECOND, 59)
+        cal.set(Calendar.MILLISECOND, 999)
+        val end = cal.timeInMillis
+        return Pair(start, end)
+    }
 
     fun getCategoryTimeTodayMinutes(category: String, referenceTime: Long = System.currentTimeMillis()): Long {
         val todayLogs = allLogs.value.filter { isToday(it.startTime, referenceTime) }
@@ -557,6 +625,8 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
             obj.put("endTime", log.endTime)
             obj.put("updatedTime", log.updatedTime)
             obj.put("belongDate", log.belongDate)
+            obj.put("timerType", log.timerType)
+            obj.put("isAutoTimer", log.timerType == 1)
             recordsArray.put(obj)
         }
         
@@ -611,7 +681,12 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
                     durationMinutes = obj.getLong("durationMinutes"),
                     endTime = obj.optLong("endTime", 0L),
                     updatedTime = obj.optLong("updatedTime", System.currentTimeMillis()),
-                    belongDate = obj.optString("belongDate", "")
+                    belongDate = obj.optString("belongDate", ""),
+                    timerType = if (obj.has("timerType")) {
+                        obj.getInt("timerType")
+                    } else {
+                        if (obj.optBoolean("isAutoTimer", false)) 1 else 0
+                    }
                 )
                 parsedLogs.add(log)
             }
@@ -638,7 +713,8 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 onSuccess()
             } catch (e: Exception) {
-                onFailure(e.localizedMessage ?: "导入过程发生错误")
+                val fallbackMsg = if (java.util.Locale.getDefault().language == "zh") "导入过程发生错误" else "An error occurred during import"
+                onFailure(e.localizedMessage ?: fallbackMsg)
             }
         }
     }

@@ -19,6 +19,7 @@
     
     <string name="manual_add_title">补录时间条目</string>
     <string name="manual_label_desc">事物内容</string>
+    <string name="manual_desc_placeholder">例如：看书、跑步、写文档</string>
     <string name="manual_label_category">选择分类</string>
     <string name="manual_label_duration">专注时长(分钟)</string>
     <string name="btn_save">确认保存</string>
@@ -26,7 +27,7 @@
     <string name="empty_logs_title">没有记录时间哦</string>
     <string name="empty_logs_subtitle">使用计时器或添加一条手动记录，把流逝的时间可视化吧！</string>
 
-    <string name="stats_today">今天</string>
+    <string name="stats_today">按天</string>
     <string name="stats_monthly">按月</string>
     <string name="stats_all">所有记录</string>
     <string name="stats_goal">每日目标</string>
@@ -98,12 +99,23 @@
     <string name="content_edit_log">编辑记录</string>
     <string name="content_delete_log">删除记录</string>
     <string name="btn_back">返回</string>
-    <string name="stats_title_today">今日时间分类占比</string>
+    <string name="stats_title_today">当日时间分类占比</string>
     <string name="stats_title_monthly">本月时间分类占比</string>
     <string name="monthly_progress_title">当月累计与目标进度</string>
     <string name="monthly_total_title">当月累计时间</string>
     <string name="target_settings_done">完成设定</string>
     <string name="desc_auto_timer">自动计时</string>
-    <string name="desc_auto_timer_start">自动开始计时</string>
+    <string name="desc_auto_timer_start">自动计时</string>
     <string name="desc_manual_record">手动记录</string>
+    <string name="desc_quick_timer">快捷计时</string>
+    <string name="edit_log_time_range_label">时间段</string>
+    <string name="edit_log_date_label">日期</string>
+    <string name="edit_log_start_time_label">开始时间</string>
+    <string name="edit_log_end_time_label">结束时间</string>
+    <string name="month_picker_title">选择月份</string>
+    <string name="month_picker_confirm">确认</string>
+    <string name="month_picker_cancel">取消</string>
+    <string name="content_reset_to_current_month">回到当前月份</string>
+    <string name="content_select_month">选择月份</string>
+    <string name="content_select_date">选择日期</string>
 </resources>

@@ -19,6 +19,7 @@
     
     <string name="manual_add_title">Manual Entry</string>
     <string name="manual_label_desc">Activity Description</string>
+    <string name="manual_desc_placeholder">e.g., Read books, running, write docs</string>
     <string name="manual_label_category">Select Category</string>
     <string name="manual_label_duration">Duration (Minutes)</string>
     <string name="btn_save">Save</string>
@@ -26,7 +27,7 @@
     <string name="empty_logs_title">No duration logs yet</string>
     <string name="empty_logs_subtitle">Use the timer or add a manual entry to visualize your time!</string>
 
-    <string name="stats_today">Today</string>
+    <string name="stats_today">Daily</string>
     <string name="stats_monthly">Monthly</string>
     <string name="stats_all">All Records</string>
     <string name="stats_goal">Daily Goal</string>
@@ -98,12 +99,23 @@
     <string name="content_edit_log">Edit Log</string>
     <string name="content_delete_log">Delete Log</string>
     <string name="btn_back">Back</string>
-    <string name="stats_title_today">Today\'s Time Distribution</string>
+    <string name="stats_title_today">Daily Time Distribution</string>
     <string name="stats_title_monthly">This Month\'s Time Distribution</string>
     <string name="monthly_progress_title">Monthly Progress</string>
     <string name="monthly_total_title">Monthly Total</string>
     <string name="target_settings_done">Done</string>
     <string name="desc_auto_timer">Auto-Timer</string>
-    <string name="desc_auto_timer_start">Auto Tracker Started</string>
+    <string name="desc_auto_timer_start">Auto Tracker</string>
     <string name="desc_manual_record">Manual Entry</string>
+    <string name="desc_quick_timer">Quick Timer</string>
+    <string name="edit_log_time_range_label">Time Period</string>
+    <string name="edit_log_date_label">Date</string>
+    <string name="edit_log_start_time_label">Start Time</string>
+    <string name="edit_log_end_time_label">End Time</string>
+    <string name="month_picker_title">Select Month</string>
+    <string name="month_picker_confirm">OK</string>
+    <string name="month_picker_cancel">Cancel</string>
+    <string name="content_reset_to_current_month">Back to current month</string>
+    <string name="content_select_month">Select month</string>
+    <string name="content_select_date">Select date</string>
 </resources>

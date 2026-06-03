@@ -12,7 +12,8 @@ data class TimeLog(
     val durationMinutes: Long,
     val endTime: Long = startTime + durationMinutes * 60 * 1000, // Epoch millis
     val updatedTime: Long = System.currentTimeMillis(), // Epoch millis
-    val belongDate: String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(startTime))
+    val belongDate: String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date(startTime)),
+    val timerType: Int = 0
 )
 
 @Dao
@@ -39,7 +40,7 @@ interface TimeLogDao {
     fun getLogsForDay(startOfDay: Long, endOfDay: Long): Flow<List<TimeLog>>
 }
 
-@Database(entities = [TimeLog::class], version = 1, exportSchema = false)
+@Database(entities = [TimeLog::class], version = 3, exportSchema = false)
 abstract class TimeTrackDatabase : RoomDatabase() {
     abstract fun timeLogDao(): TimeLogDao
 }
