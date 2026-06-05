@@ -23,13 +23,41 @@ val Categories = listOf(
 )
 
 fun getCategoryColor(name: String): Color {
-    return Categories.find { it.name == name }?.color ?: Color(0xFF64748B)
+    return Categories.find { it.id == name || it.name == name }?.color ?: Color(0xFF64748B)
 }
 
 fun getCategoryLightColor(name: String): Color {
-    return Categories.find { it.name == name }?.lightColor ?: Color(0xFFF1F5F9)
+    return Categories.find { it.id == name || it.name == name }?.lightColor ?: Color(0xFFF1F5F9)
 }
 
 fun getCategoryIcon(name: String): ImageVector {
-    return Categories.find { it.name == name }?.icon ?: Icons.Default.Schedule
+    return Categories.find { it.id == name || it.name == name }?.icon ?: Icons.Default.Schedule
+}
+
+fun normalizeCategoryToId(category: String): String {
+    return when (category) {
+        "工作" -> "work"
+        "学习" -> "study"
+        "运动" -> "sports"
+        "休息" -> "rest"
+        "entertainment", "娱乐" -> "entertainment"
+        "routine", "日常" -> "routine"
+        else -> {
+            Categories.find { it.name == category || it.id == category }?.id ?: category
+        }
+    }
+}
+
+fun getCategoryDisplayName(categoryKey: String): String {
+    return when (categoryKey) {
+        "work" -> "工作"
+        "study" -> "学习"
+        "sports" -> "运动"
+        "rest" -> "休息"
+        "entertainment" -> "娱乐"
+        "routine" -> "日常"
+        else -> {
+            Categories.find { it.name == categoryKey || it.id == categoryKey }?.name ?: categoryKey
+        }
+    }
 }

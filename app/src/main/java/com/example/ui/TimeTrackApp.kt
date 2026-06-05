@@ -28,6 +28,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -574,7 +575,7 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
         val currentYear = now.get(java.util.Calendar.YEAR)
         val currentMonth = now.get(java.util.Calendar.MONTH)
         allLogs.filter { log ->
-            if (log.category == selectedCat) {
+            if (normalizeCategoryToId(log.category) == normalizeCategoryToId(selectedCat)) {
                 val cal = java.util.Calendar.getInstance().apply { timeInMillis = log.startTime }
                 cal.get(java.util.Calendar.YEAR) == currentYear && cal.get(java.util.Calendar.MONTH) == currentMonth
             } else {
@@ -590,7 +591,7 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
 
     // Dynamic stats: newest record details of selected category (only search for today's logs)
     val latestLog = remember(allLogs, selectedCat, currentDateTrigger) {
-        allLogs.firstOrNull { it.category == selectedCat && viewModel.isToday(it.startTime, currentDateTrigger) }
+        allLogs.firstOrNull { normalizeCategoryToId(it.category) == normalizeCategoryToId(selectedCat) && viewModel.isToday(it.startTime, currentDateTrigger) }
     }
 
     val noRecordsPlaceholder = stringResource(R.string.label_no_records)
@@ -670,7 +671,7 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
 
-                val targetHours = monthlyCategoryTargets[selectedCat] ?: 40.0f
+                val targetHours = monthlyCategoryTargets[normalizeCategoryToId(selectedCat)] ?: monthlyCategoryTargets[selectedCat] ?: 40.0f
                 val targetMins = (targetHours * 60).toLong()
                 val progressPercent = if (targetMins > 0) {
                     kotlin.math.floor((currentMonthSelectedCatMins.toDouble() / targetMins) * 100.0).toInt().coerceIn(0, 100)
@@ -901,14 +902,14 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         rowItems.forEach { cat ->
-                            val isSelected = selectedCat == cat.name
+                            val isSelected = normalizeCategoryToId(selectedCat) == cat.id
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(48.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (isSelected) cat.color else cat.lightColor)
-                                    .clickable { viewModel.updateSelectedCategory(cat.name) }
+                                    .clickable { viewModel.updateSelectedCategory(cat.id) }
                                     .testTag("category_chip_${cat.id}")
                                     .padding(horizontal = 8.dp),
                                 contentAlignment = Alignment.Center
@@ -966,7 +967,13 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                 }
             } else {
                 OutlinedButton(
-                    onClick = { viewModel.resetTimer() },
+                    onClick = {
+                        if (timerType == 1) {
+                            viewModel.ignoreRunningAutoTimer()
+                        } else {
+                            viewModel.resetTimer()
+                        }
+                    },
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier
                         .weight(1f)
@@ -981,7 +988,7 @@ fun TimerScreen(viewModel: TimeTrackViewModel) {
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = stringResource(R.string.btn_cancel),
+                        text = stringResource(if (timerType == 1) R.string.btn_ignore else R.string.btn_cancel),
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.Bold
                     )
@@ -1429,7 +1436,8 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
         allLogs.forEach { log ->
             c.timeInMillis = log.startTime
             if (c.get(Calendar.YEAR) == targetYear && c.get(Calendar.DAY_OF_YEAR) == targetDayOfYear) {
-                totals[log.category] = (totals[log.category] ?: 0f) + log.durationMinutes
+                val displayName = getCategoryDisplayName(log.category)
+                totals[displayName] = (totals[displayName] ?: 0f) + log.durationMinutes
             }
         }
         totals
@@ -1449,7 +1457,8 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
         allLogs.forEach { log ->
             c.timeInMillis = log.startTime
             if (c.get(Calendar.YEAR) == activeYear && c.get(Calendar.MONTH) == activeMonthIdx) {
-                totals[log.category] = (totals[log.category] ?: 0f) + log.durationMinutes
+                val displayName = getCategoryDisplayName(log.category)
+                totals[displayName] = (totals[displayName] ?: 0f) + log.durationMinutes
             }
         }
         totals
@@ -1463,7 +1472,8 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
         val totals = mutableMapOf<String, Float>()
         Categories.forEach { cat -> totals[cat.name] = 0f }
         rawLogs.forEach { log ->
-            totals[log.category] = (totals[log.category] ?: 0f) + log.durationMinutes
+            val displayName = getCategoryDisplayName(log.category)
+            totals[displayName] = (totals[displayName] ?: 0f) + log.durationMinutes
         }
         totals
     }
@@ -1538,6 +1548,7 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
                         Spacer(modifier = Modifier.width(8.dp))
                     }
 
+                    val surfaceColor = MaterialTheme.colorScheme.surface
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -1547,8 +1558,14 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
                                 val currentM = currentStatsDay.get(Calendar.MONTH)
                                 val currentD = currentStatsDay.get(Calendar.DAY_OF_MONTH)
                                 
+                                val isDark = with(surfaceColor) {
+                                    (red * 0.299f + green * 0.587f + blue * 0.114f) < 0.5f
+                                }
+                                val dialogTheme = if (isDark) com.example.R.style.DatePickerThemeDark else com.example.R.style.DatePickerThemeLight
+
                                 android.app.DatePickerDialog(
                                     context,
+                                    dialogTheme,
                                     { _, year, month, dayOfMonth ->
                                         viewModel.setStatsDay(year, month, dayOfMonth)
                                     },
@@ -1849,7 +1866,7 @@ fun StatsScreen(viewModel: TimeTrackViewModel) {
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Categories.forEach { category ->
-                        val targetHours = monthlyCategoryTargets[category.name] ?: 40.0f
+                        val targetHours = monthlyCategoryTargets[category.id] ?: monthlyCategoryTargets[category.name] ?: 40.0f
                         val targetMins = targetHours * 60f
 
                         if (statsPeriod == "今天") {
@@ -2458,7 +2475,7 @@ fun EditTimeLogDialog(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             rowCategories.forEach { category ->
-                                val isSelected = selectedCategory == category.name
+                                val isSelected = normalizeCategoryToId(selectedCategory) == category.id
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -2466,7 +2483,7 @@ fun EditTimeLogDialog(
                                         .background(
                                             if (isSelected) category.color else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                         )
-                                        .clickable { selectedCategory = category.name }
+                                        .clickable { selectedCategory = category.id }
                                         .padding(horizontal = 6.dp, vertical = 8.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -2630,15 +2647,19 @@ fun MonthlyTargetSettingsDialog(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Categories.forEach { category ->
-                    val totalInHours = monthlyTargets[category.name] ?: 0f
+                    val totalInHours = monthlyTargets[category.id] ?: monthlyTargets[category.name] ?: 0f
                     
                     val keyPrefix = if (monthKey == null) "" else "${monthKey}_"
                     val storedInput = remember(totalInHours, monthKey) {
-                        viewModel.prefs.getString("target_input_${keyPrefix}${category.name}", null)
+                        viewModel.prefs.getString("target_input_${keyPrefix}${category.id}", null)
+                            ?: viewModel.prefs.getString("target_input_${category.id}", null)
+                            ?: viewModel.prefs.getString("target_input_${keyPrefix}${category.name}", null)
                             ?: viewModel.prefs.getString("target_input_${category.name}", null)
                     }
                     val storedUnit = remember(totalInHours, monthKey) {
-                        viewModel.prefs.getString("target_unit_${keyPrefix}${category.name}", null)
+                        viewModel.prefs.getString("target_unit_${keyPrefix}${category.id}", null)
+                            ?: viewModel.prefs.getString("target_unit_${category.id}", null)
+                            ?: viewModel.prefs.getString("target_unit_${keyPrefix}${category.name}", null)
                             ?: viewModel.prefs.getString("target_unit_${category.name}", null)
                     }
 
@@ -2713,7 +2734,7 @@ fun MonthlyTargetSettingsDialog(
                                     rawText = filtered
                                     val parsedValue = filtered.toFloatOrNull() ?: 0f
                                     val calculatedHours = if (unit == "分钟") parsedValue / 60f else parsedValue
-                                    viewModel.updateMonthlyTarget(monthKey, category.name, calculatedHours, filtered, unit)
+                                    viewModel.updateMonthlyTarget(monthKey, category.id, calculatedHours, filtered, unit)
                                 },
                                 textStyle = MaterialTheme.typography.bodyMedium,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -2746,7 +2767,7 @@ fun MonthlyTargetSettingsDialog(
                                                 unit = u
                                                 val parsedValue = rawText.toFloatOrNull() ?: 0f
                                                 val calculatedHours = if (u == "分钟") parsedValue / 60f else parsedValue
-                                                viewModel.updateMonthlyTarget(monthKey, category.name, calculatedHours, rawText, u)
+                                                viewModel.updateMonthlyTarget(monthKey, category.id, calculatedHours, rawText, u)
                                             }
                                             .padding(horizontal = 8.dp, vertical = 6.dp)
                                     ) {
@@ -2915,7 +2936,7 @@ fun SettingsScreen(viewModel: TimeTrackViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             rowCategories.forEach { category ->
-                                val isSelected = defaultCategory == category.name
+                                val isSelected = normalizeCategoryToId(defaultCategory) == category.id
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -2924,7 +2945,7 @@ fun SettingsScreen(viewModel: TimeTrackViewModel) {
                                         .background(
                                             if (isSelected) category.color else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                         )
-                                        .clickable { viewModel.updateDefaultCategory(category.name) }
+                                        .clickable { viewModel.updateDefaultCategory(category.id) }
                                         .testTag("settings_default_chip_${category.id}")
                                         .padding(horizontal = 4.dp),
                                     contentAlignment = Alignment.Center
@@ -3206,7 +3227,7 @@ fun ManualRecordDialog(
     val localFocusManager = LocalFocusManager.current
     val context = LocalContext.current
     var desc by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("工作") }
+    var selectedCategory by remember { mutableStateOf("work") }
     var durationMinutesTextState by remember {
         mutableStateOf(
             TextFieldValue(
@@ -3278,7 +3299,7 @@ fun ManualRecordDialog(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             rowCategories.forEach { category ->
-                                val isSelected = selectedCategory == category.name
+                                val isSelected = normalizeCategoryToId(selectedCategory) == category.id
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
@@ -3286,7 +3307,7 @@ fun ManualRecordDialog(
                                         .background(
                                             if (isSelected) category.color else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                         )
-                                        .clickable { selectedCategory = category.name }
+                                        .clickable { selectedCategory = category.id }
                                         .testTag("dialog_category_chip_${category.id}")
                                         .padding(horizontal = 6.dp, vertical = 8.dp),
                                     contentAlignment = Alignment.Center
@@ -3325,6 +3346,7 @@ fun ManualRecordDialog(
                 
                 val manualDateFormat = remember { java.text.DateFormat.getDateInstance(java.text.DateFormat.LONG, Locale.getDefault()) }
                 val selectedDateText = remember(selectedDateMillis) { manualDateFormat.format(Date(selectedDateMillis)) }
+                val surfaceColor = MaterialTheme.colorScheme.surface
 
                 Box(
                     modifier = Modifier
@@ -3338,8 +3360,14 @@ fun ManualRecordDialog(
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f))
                         .clickable {
                             val currentCal = Calendar.getInstance().apply { timeInMillis = selectedDateMillis }
+                            val isDark = with(surfaceColor) {
+                                (red * 0.299f + green * 0.587f + blue * 0.114f) < 0.5f
+                            }
+                            val dialogTheme = if (isDark) com.example.R.style.DatePickerThemeDark else com.example.R.style.DatePickerThemeLight
+
                             android.app.DatePickerDialog(
                                 context,
+                                dialogTheme,
                                 { _, year, month, dayOfMonth ->
                                     val newCal = Calendar.getInstance().apply {
                                         timeInMillis = selectedDateMillis
@@ -3491,6 +3519,13 @@ fun MonthPickerDialog(
         val currentY = Calendar.getInstance().get(Calendar.YEAR)
         ((currentY - 10)..(currentY + 5)).toList()
     }
+
+    val yearsState = androidx.compose.foundation.lazy.rememberLazyListState(
+        initialFirstVisibleItemIndex = (years.indexOf(initialYear) - 2).coerceIn(0, years.size - 1)
+    )
+    val monthsState = androidx.compose.foundation.lazy.rememberLazyListState(
+        initialFirstVisibleItemIndex = (initialMonth - 2).coerceIn(0, 11)
+    )
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3510,6 +3545,7 @@ fun MonthPickerDialog(
             ) {
                 // Year list (scrollable Column)
                 androidx.compose.foundation.lazy.LazyColumn(
+                    state = yearsState,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxHeight()
@@ -3541,6 +3577,7 @@ fun MonthPickerDialog(
                 
                 // Month list
                 androidx.compose.foundation.lazy.LazyColumn(
+                    state = monthsState,
                     modifier = Modifier
                         .weight(1.2f)
                         .fillMaxHeight()
@@ -3591,4 +3628,5 @@ fun MonthPickerDialog(
         }
     )
 }
+
 

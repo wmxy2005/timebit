@@ -116,7 +116,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     private val _isTimerRunning = MutableStateFlow(false)
     val isTimerRunning: StateFlow<Boolean> = _isTimerRunning
 
-    private val _timerCategory = MutableStateFlow(prefs.getString("default_category", "工作") ?: "工作")
+    private val _timerCategory = MutableStateFlow(normalizeCategoryToId(prefs.getString("default_category", "work") ?: "work"))
     val timerCategory: StateFlow<String> = _timerCategory
 
     private val _timerDescription = MutableStateFlow("")
@@ -136,7 +136,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     val statsPeriod: StateFlow<String> = _statsPeriod
 
     // Settings States
-    private val _defaultCategory = MutableStateFlow(prefs.getString("default_category", "工作") ?: "工作")
+    private val _defaultCategory = MutableStateFlow(normalizeCategoryToId(prefs.getString("default_category", "work") ?: "work"))
     val defaultCategory: StateFlow<String> = _defaultCategory
 
     // Theme Settings State: "auto", "light", "dark"
@@ -149,11 +149,11 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     // Last user-selected category on the timer screen
-    private val _selectedTrackerCategory = MutableStateFlow(prefs.getString("default_category", "工作") ?: "工作")
+    private val _selectedTrackerCategory = MutableStateFlow(normalizeCategoryToId(prefs.getString("default_category", "work") ?: "work"))
     val selectedTrackerCategory: StateFlow<String> = _selectedTrackerCategory
 
     fun updateSelectedCategory(category: String) {
-        _selectedTrackerCategory.value = category
+        _selectedTrackerCategory.value = normalizeCategoryToId(category)
     }
 
     private val _autoTimerEnabled = MutableStateFlow(prefs.getBoolean("auto_timer_enabled", false))
@@ -169,6 +169,36 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         val raw = prefs.getString("auto_timer_weekdays", "1,2,3,4,5,6,7") ?: "1,2,3,4,5,6,7"
         if (raw.isEmpty()) return emptySet()
         return raw.split(",").mapNotNull { it.toIntOrNull() }.toSet()
+    }
+
+    private val _autoTimerIgnoredDates = MutableStateFlow<Set<String>>(
+        prefs.getStringSet("auto_timer_ignored_dates", emptySet())?.toSet() ?: emptySet()
+    )
+    val autoTimerIgnoredDates: StateFlow<Set<String>> = _autoTimerIgnoredDates
+
+    fun ignoreAutoTimerForToday() {
+        val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val currentSet = _autoTimerIgnoredDates.value.toMutableSet()
+        currentSet.add(todayStr)
+        _autoTimerIgnoredDates.value = currentSet
+        prefs.edit().putStringSet("auto_timer_ignored_dates", currentSet).apply()
+    }
+
+    fun clearExpiredIgnoreData() {
+        val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        val currentSet = prefs.getStringSet("auto_timer_ignored_dates", emptySet())?.toSet() ?: emptySet()
+        if (currentSet.any { it != todayStr }) {
+            val filtered = currentSet.filter { it == todayStr }.toSet()
+            _autoTimerIgnoredDates.value = filtered
+            prefs.edit().putStringSet("auto_timer_ignored_dates", filtered).apply()
+        } else {
+            _autoTimerIgnoredDates.value = currentSet
+        }
+    }
+
+    fun clearAllIgnoreData() {
+        _autoTimerIgnoredDates.value = emptySet()
+        prefs.edit().putStringSet("auto_timer_ignored_dates", emptySet()).apply()
     }
 
     // Target settings triggers and reactive maps
@@ -216,7 +246,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         if (savedIsRunning) {
             val savedStartMillis = prefs.getLong("timer_start_millis", 0L)
             if (savedStartMillis > 0L) {
-                _timerCategory.value = prefs.getString("timer_category", "工作") ?: "工作"
+                _timerCategory.value = normalizeCategoryToId(prefs.getString("timer_category", "work") ?: "work")
                 _timerDescription.value = prefs.getString("timer_description", "") ?: ""
                 _timerStartMillis.value = savedStartMillis
                 val savedResId = prefs.getInt("timer_resuming_id", -1)
@@ -228,7 +258,9 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 _isTimerRunning.value = true
                 _timerElapsedSeconds.value = (System.currentTimeMillis() - savedStartMillis) / 1000
-                startTimerCounting(savedStartMillis)
+                if (_selectedTab.value == 0) {
+                    startTimerCounting(savedStartMillis)
+                }
             }
         }
     }
@@ -238,10 +270,18 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         refreshCurrentDate()
         if (index == 0) {
             checkAndTriggerAutoTimerOnSwitch()
+            if (_isTimerRunning.value && _timerStartMillis.value > 0L) {
+                _timerElapsedSeconds.value = (System.currentTimeMillis() - _timerStartMillis.value) / 1000
+                startTimerCounting(_timerStartMillis.value)
+            }
+        } else {
+            timerJob?.cancel()
+            timerJob = null
         }
     }
 
     fun checkAndTriggerAutoTimerOnSwitch() {
+        clearExpiredIgnoreData()
         viewModelScope.launch {
             if (_autoTimerEnabled.value && !_isTimerRunning.value) {
                 // If state flow is empty, wait briefly for database load on startup
@@ -255,6 +295,12 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(now.time)
+                
+                // Ensure no auto-timer ignore data for today
+                if (_autoTimerIgnoredDates.value.contains(todayStr)) {
+                    return@launch
+                }
+
                 val isAbandoned = prefs.getString("last_abandoned_date", "") == todayStr
                 if (isAbandoned) return@launch
 
@@ -283,42 +329,75 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun ignoreRunningAutoTimer() {
+        _isTimerRunning.value = false
+        _timerElapsedSeconds.value = 0L
+        _timerDescription.value = ""
+        _resumingLogId.value = null
+        _timerType.value = 0
+        clearPersistedRunningTimer()
+        timerJob?.cancel()
+
+        ignoreAutoTimerForToday()
+    }
+
     private fun loadMonthlyTargets(): Map<String, Float> {
         val defaults = mapOf(
-            "工作" to 0.0f,
-            "学习" to 0.0f,
-            "运动" to 0.0f,
-            "休息" to 0.0f,
-            "娱乐" to 0.0f,
-            "日常" to 0.0f
+            "work" to 0.0f,
+            "study" to 0.0f,
+            "sports" to 0.0f,
+            "rest" to 0.0f,
+            "entertainment" to 0.0f,
+            "routine" to 0.0f
         )
         return defaults.mapValues { (cat, defaultVal) ->
-            prefs.getFloat("target_$cat", defaultVal)
+            val legacyCat = when (cat) {
+                "work" -> "工作"
+                "study" -> "学习"
+                "sports" -> "运动"
+                "rest" -> "休息"
+                "entertainment" -> "娱乐"
+                "routine" -> "日常"
+                else -> cat
+            }
+            if (prefs.contains("target_$cat")) {
+                prefs.getFloat("target_$cat", defaultVal)
+            } else {
+                prefs.getFloat("target_$legacyCat", defaultVal)
+            }
         }
     }
 
     fun getMonthlyTargetsForMonth(monthKey: String?): Map<String, Float> {
         val defaults = mapOf(
-            "工作" to 0.0f,
-            "学习" to 0.0f,
-            "运动" to 0.0f,
-            "休息" to 0.0f,
-            "娱乐" to 0.0f,
-            "日常" to 0.0f
+            "work" to 0.0f,
+            "study" to 0.0f,
+            "sports" to 0.0f,
+            "rest" to 0.0f,
+            "entertainment" to 0.0f,
+            "routine" to 0.0f
         )
         val defaultTargets = loadMonthlyTargets()
         if (monthKey == null) {
             return defaultTargets
         }
         return defaults.mapValues { (cat, _) ->
-            val hasMonthSpecific = prefs.contains("target_${monthKey}_$cat")
-            if (hasMonthSpecific) {
-                val monthVal = prefs.getFloat("target_${monthKey}_$cat", 0.0f)
-                if (monthVal == 0.0f) {
-                    defaultTargets[cat] ?: 0.0f
-                } else {
-                    monthVal
-                }
+            val legacyCat = when (cat) {
+                "work" -> "工作"
+                "study" -> "学习"
+                "sports" -> "运动"
+                "rest" -> "休息"
+                "entertainment" -> "娱乐"
+                "routine" -> "日常"
+                else -> cat
+            }
+            val idKey = "target_${monthKey}_$cat"
+            val legacyKey = "target_${monthKey}_$legacyCat"
+            
+            if (prefs.contains(idKey)) {
+                prefs.getFloat(idKey, 0.0f)
+            } else if (prefs.contains(legacyKey)) {
+                prefs.getFloat(legacyKey, 0.0f)
             } else {
                 defaultTargets[cat] ?: 0.0f
             }
@@ -333,15 +412,17 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     // Settings Modification Actions
     fun updateDefaultCategory(category: String) {
-        _defaultCategory.value = category
-        _selectedTrackerCategory.value = category
+        val catId = normalizeCategoryToId(category)
+        _defaultCategory.value = catId
+        _selectedTrackerCategory.value = catId
         if (!_isTimerRunning.value) {
-            _timerCategory.value = category
+            _timerCategory.value = catId
         }
         prefs.edit()
-            .putString("default_category", category)
+            .putString("default_category", catId)
             .putString("last_abandoned_date", "")
             .apply()
+        clearAllIgnoreData()
     }
 
     fun updateAutoTimerEnabled(enabled: Boolean) {
@@ -354,6 +435,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
             // clear today auto started state so that toggling it back on can allow re-trigger
             prefs.edit().putString("last_auto_started_date", "").apply()
         }
+        clearAllIgnoreData()
     }
 
     fun updateAutoTimerTime(time: String) {
@@ -364,6 +446,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
             .apply()
         // clear auto started state on time change to allow fresh check
         prefs.edit().putString("last_auto_started_date", "").apply()
+        clearAllIgnoreData()
     }
 
     fun updateAutoTimerWeekdays(weekdays: Set<Int>) {
@@ -373,6 +456,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
             .putString("auto_timer_weekdays", str)
             .putString("last_abandoned_date", "")
             .apply()
+        clearAllIgnoreData()
     }
 
     fun updateTimerDescription(desc: String) {
@@ -387,16 +471,17 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun updateMonthlyTarget(monthKey: String? = null, category: String, hours: Float, rawInput: String, unit: String) {
+        val catId = normalizeCategoryToId(category)
         val keyPrefix = if (monthKey == null) "" else "${monthKey}_"
         prefs.edit()
-            .putFloat("target_${keyPrefix}$category", hours)
-            .putString("target_input_${keyPrefix}$category", rawInput)
-            .putString("target_unit_${keyPrefix}$category", unit)
+            .putFloat("target_${keyPrefix}$catId", hours)
+            .putString("target_input_${keyPrefix}$catId", rawInput)
+            .putString("target_unit_${keyPrefix}$catId", unit)
             .apply()
 
         if (monthKey == null) {
             val current = _monthlyCategoryTargets.value.toMutableMap()
-            current[category] = hours
+            current[catId] = hours
             _monthlyCategoryTargets.value = current
         }
 
@@ -428,7 +513,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
     // Timer Actions
     fun startTimer(category: String, description: String) {
         if (_isTimerRunning.value) return
-        _timerCategory.value = category
+        _timerCategory.value = normalizeCategoryToId(category)
         _timerDescription.value = description
         _timerStartMillis.value = System.currentTimeMillis()
         _timerType.value = 0
@@ -442,7 +527,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     // Start timer using a specified starting time from the past
     fun startTimerFromPast(category: String, description: String, startMillis: Long, id: Int, timerType: Int = 0) {
-        _timerCategory.value = category
+        _timerCategory.value = normalizeCategoryToId(category)
         _timerDescription.value = description
         _timerStartMillis.value = startMillis
         _resumingLogId.value = id
@@ -513,21 +598,21 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun updateLog(log: TimeLog) {
         viewModelScope.launch {
-            repository.updateLog(log)
+            repository.updateLog(log.copy(category = normalizeCategoryToId(log.category)))
         }
     }
 
     // Manual CRUD Actions
     fun addLog(log: TimeLog) {
         viewModelScope.launch {
-            repository.insertLog(log)
+            repository.insertLog(log.copy(category = normalizeCategoryToId(log.category)))
         }
     }
 
     fun addManualLog(category: String, description: String, durationMins: Long, startTimeMillis: Long) {
         viewModelScope.launch {
             val log = TimeLog(
-                category = category,
+                category = normalizeCategoryToId(category),
                 description = description,
                 startTime = startTimeMillis,
                 durationMinutes = durationMins,
@@ -584,7 +669,8 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun getCategoryTimeTodayMinutes(category: String, referenceTime: Long = System.currentTimeMillis()): Long {
         val todayLogs = allLogs.value.filter { isToday(it.startTime, referenceTime) }
-        return todayLogs.filter { it.category == category }.sumOf { it.durationMinutes }
+        val normalizedTarget = normalizeCategoryToId(category)
+        return todayLogs.filter { normalizeCategoryToId(it.category) == normalizedTarget }.sumOf { it.durationMinutes }
     }
 
     fun isToday(timeMillis: Long, referenceTime: Long = System.currentTimeMillis()): Boolean {
@@ -614,7 +700,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
 
     // Export daily time logs into a valid JSON string
     fun exportAllLogsToJson(): String {
-        val list = _allLogs.value
+        val list = _allLogs.value.map { it.copy(category = normalizeCategoryToId(it.category)) }
         val recordsArray = org.json.JSONArray()
         for (log in list) {
             val obj = org.json.JSONObject()
@@ -693,7 +779,7 @@ class TimeTrackViewModel(application: Application) : AndroidViewModel(applicatio
             
             val actualChecksum = calculateChecksumForLogs(parsedLogs)
             if (expectedChecksum == actualChecksum) {
-                parsedLogs
+                parsedLogs.map { it.copy(category = normalizeCategoryToId(it.category)) }
             } else {
                 null
             }

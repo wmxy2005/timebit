@@ -118,4 +118,9 @@
     <string name="content_reset_to_current_month">回到当前月份</string>
     <string name="content_select_month">选择月份</string>
     <string name="content_select_date">选择日期</string>
+    <string name="auto_timer_ready_title">自动计时就绪</string>
+    <string name="auto_timer_ready_desc">已到达设定的自动计时时间段，是否使用默认分类开始自动记录？</string>
+    <string name="auto_timer_running_title">正在进行自动计时</string>
+    <string name="auto_timer_running_desc">设定的自动计时段正在运行记录中。</string>
+    <string name="btn_ignore">忽略</string>
 </resources>
